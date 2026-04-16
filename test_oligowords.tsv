@@ -1,0 +1,10 @@
+# 12:30:40
+# test
+# Sequence length: 8000 bp.
+# Window: 4600	Step: 2300
+#
+# Chrom	Start	Stop	GC-content 
+test	0	4600	0.5001087192868015
+test	2300	6900	0.5001087192868015
+test	4600	1199	0.5
+test	6900	3499	0.5
