@@ -132,13 +132,15 @@ impl Validator {
 
         let step = match step_opt {
             Some(s) => {
-                if s == 0 {
-                    return Err(anyhow!("The step must be a positive integer."));
-                }
+                // Allow step=0, which means non-overlapping windows (step = frame)
                 if s > frame {
                     return Err(anyhow!("The step {} bp is longer than the window.", s));
                 }
-                s
+                if s == 0 {
+                    frame  // Non-overlapping windows
+                } else {
+                    s
+                }
             }
             None => frame / 2,
         };
@@ -230,9 +232,12 @@ mod tests {
     }
 
     #[test]
-    fn test_step_zero_errors() {
+    fn test_step_zero_generates_non_overlapping() {
         let mut v = Validator::new();
-        assert!(v.validate("n0_4mer:D", Some(8000), Some(0)).is_err());
+        let (_, frame, step) = v.validate("n0_4mer:D", Some(8000), Some(0)).unwrap();
+        // Step of 0 should be converted to frame (non-overlapping windows)
+        assert_eq!(frame, 8000);
+        assert_eq!(step, 8000);
     }
 
     #[test]

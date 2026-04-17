@@ -211,10 +211,11 @@ fn process_sequence(
     }).collect();
 
     // Enumerate all window positions upfront so rayon can index into them.
+    // Using half-open intervals [start, stop) for proper bedgraph format.
     let windows: Vec<(usize, usize)> = {
         let mut w = Vec::new();
         let mut start = 0usize;
-        let mut stop = frame - 1;
+        let mut stop = frame;  // stop is exclusive (half-open interval)
         while stop <= seq_len + frame {
             w.push((start, stop));
             start += step;
@@ -229,19 +230,20 @@ fn process_sequence(
         .par_iter()
         .map(|&(start, stop)| {
             if !quiet {
-                println!("[{}, {}]", start, stop);
+                println!("[{}, {})", start, stop);
             }
 
             // Build locus (may wrap around circularly).
             let locus: Vec<u8> = if stop > seq_len {
                 let tail = &seq[start..];
-                let wrap_end = (stop - seq_len).saturating_sub(1).min(seq_len);
+                let wrap_end = (stop - seq_len).min(seq_len);
                 [tail, &seq[..wrap_end]].concat()
             } else {
                 seq[start..stop].to_vec()
             };
 
-            let coord_stop = if stop > seq_len { stop - seq_len } else { stop + 1 };
+            // coord_stop is already exclusive (stop is the exclusive end in half-open interval)
+            let coord_stop = if stop > seq_len { stop - seq_len } else { stop };
 
             // Compute all tasks for this window (optionally in parallel for large task lists).
             let values: Vec<String> = if tasklist.len() >= 4 {
