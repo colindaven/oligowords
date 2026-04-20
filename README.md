@@ -2,6 +2,15 @@
 
 Sliding-window oligonucleotide composition analysis of DNA sequences. For each window along a chromosome or contig, OligoWords computes one or more metrics that describe how the local k-mer frequency distribution compares to an expected or global background. The output is suitable for visualisation in a genome browser (bedGraph) or downstream statistical analysis (TSV).
 
+# Source of original code
+
+This was originally written by Reva and Tuemmler 2005 [link](https://link.springer.com/article/10.1186/1471-2105-6-251) but was in outdated Python2. It was rewritten with Claude AI is rust in April 2026. New features like bedgraph and bigwig functionality were added. 
+
+# Status - alpha
+Functionality is being tested in April 2026, mainly focused on the distance parameter and its use in predicting genomic islands or aberrant sequences.
+
+
+
 ---
 
 ## Table of contents
@@ -23,6 +32,10 @@ Sliding-window oligonucleotide composition analysis of DNA sequences. For each w
 
 ## Quick start (Rust)
 
+### Easiest - 
+* Download a release using wget.
+
+### Compile with cargo
 ```bash
 cd rust
 cargo build --release
