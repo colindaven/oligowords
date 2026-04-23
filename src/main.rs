@@ -22,6 +22,7 @@ use output::write_outputs;
 #[derive(Parser, Debug)]
 #[command(
     name = "oligowords",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Sliding-window oligonucleotide composition analysis of DNA sequences.\nReads FASTA input and writes tab-separated output files."
 )]
 struct Cli {
@@ -30,8 +31,12 @@ struct Cli {
     input: Option<PathBuf>,
 
     /// Directory to scan for *.fasta / *.fa / *.fna files
-    #[arg(long = "path", value_name = "DIR", default_value = ".")]
-    path: PathBuf,
+    #[arg(long = "path", value_name = "DIR")]
+    path: Option<PathBuf>,
+
+    /// Base name or path for output files (appends _oligowords.tsv / .bedgraph). If omitted, uses input filename stem.
+    #[arg(long = "output", value_name = "PATH")]
+    output: Option<PathBuf>,
 
     /// Semicolon-separated list of tasks (e.g. "n0_4mer:D;n1_4mer:V")
     #[arg(long, default_value = "n0_4mer:D;n0_4mer:PS;n1_4mer:V;n1_4mer:GV", value_name = "TASKS")]
@@ -52,6 +57,10 @@ struct Cli {
     /// Number of rayon threads (default: 8)
     #[arg(short = 't', long, value_name = "N", default_value_t = 8)]
     threads: usize,
+
+    /// Allow circular genome wrapping (windows extending beyond sequence end wrap to start)
+    #[arg(long, default_value_t = false)]
+    circular: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +69,13 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Require either -i/--input or --path
+    if cli.input.is_none() && cli.path.is_none() {
+        eprintln!("Error: either -i/--input or --path must be specified.");
+        eprintln!("\nFor help, run: oligowords -h");
+        std::process::exit(1);
+    }
 
     // Configure rayon thread pool FIRST — before any par_iter() call, which would
     // otherwise lazily initialise the global pool with the default (all CPUs).
@@ -71,8 +87,10 @@ fn main() -> Result<()> {
     // Resolve the list of FASTA files to process
     let file_paths: Vec<PathBuf> = if let Some(ref input) = cli.input {
         vec![input.clone()]
+    } else if let Some(ref path) = cli.path {
+        fasta_files_in_dir(path)
     } else {
-        fasta_files_in_dir(&cli.path)
+        unreachable!("Checked above that at least one is provided")
     };
 
     if file_paths.is_empty() {
@@ -87,7 +105,7 @@ fn main() -> Result<()> {
 
     // Process files in parallel when there are multiple; each writes its own output file.
     file_paths.par_iter().try_for_each(|fpath| {
-        process_file(fpath, &tasklist, frame, step, cli.quiet)
+        process_file(fpath, &tasklist, frame, step, cli.quiet, cli.circular, cli.output.as_deref())
     })?;
 
     Ok(())
@@ -103,13 +121,19 @@ fn process_file(
     frame: usize,
     step: usize,
     quiet: bool,
+    circular: bool,
+    output_base: Option<&Path>,
 ) -> Result<()> {
     use needletail::parse_fastx_file;
 
     let mut reader = parse_fastx_file(fpath)
         .with_context(|| format!("Cannot open {}", fpath.display()))?;
 
-    let stem = fpath.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
+    let stem = if let Some(output_path) = output_base {
+        output_path.to_string_lossy().to_string()
+    } else {
+        fpath.file_stem().and_then(|s| s.to_str()).unwrap_or("out").to_string()
+    };
     let dir = Path::new(".");
     let tsv_path = dir.join(format!("{}_oligowords.tsv", stem));
     let bg_path = dir.join(format!("{}_oligowords.bedgraph", stem));
@@ -136,7 +160,7 @@ fn process_file(
             println!("{}", name);
         }
 
-        process_sequence(name, &seq, tasklist, frame, step, quiet, &mut tsv_buf, &mut bg_buf);
+        process_sequence(name, &seq, tasklist, frame, step, quiet, &mut tsv_buf, &mut bg_buf, circular);
     }
 
     if !tsv_buf.is_empty() {
@@ -155,6 +179,7 @@ fn process_sequence(
     quiet: bool,
     tsv_buf: &mut String,
     bg_buf: &mut String,
+    circular: bool,
 ) {
     use std::fmt::Write;
     use pattern::Pattern;
@@ -216,10 +241,21 @@ fn process_sequence(
         let mut w = Vec::new();
         let mut start = 0usize;
         let mut stop = frame;  // stop is exclusive (half-open interval)
-        while stop <= seq_len + frame {
-            w.push((start, stop));
-            start += step;
-            stop += step;
+
+        if circular {
+            // Allow windows to wrap around (circular genome)
+            while stop <= seq_len + frame {
+                w.push((start, stop));
+                start += step;
+                stop += step;
+            }
+        } else {
+            // Only include windows that don't extend beyond sequence end (linear genome)
+            while stop <= seq_len {
+                w.push((start, stop));
+                start += step;
+                stop += step;
+            }
         }
         w
     };
@@ -358,7 +394,7 @@ mod tests {
         // Run from the tmp dir so output lands there (binary writes to cwd = tmp).
         let orig_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
-        process_file(&fpath, &tasks, frame, step, true).unwrap();
+        process_file(&fpath, &tasks, frame, step, true, false).unwrap();
         std::env::set_current_dir(&orig_dir).unwrap();
         assert!(tmp.path().join("test_oligowords.tsv").exists());
         assert!(tmp.path().join("test_oligowords.bedgraph").exists());
